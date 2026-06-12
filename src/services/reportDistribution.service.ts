@@ -24,12 +24,16 @@ class ReportDistributionService {
       throw new NotFoundError('报告不存在');
     }
 
-    if (report.status !== ReportStatus.APPROVED) {
-      throw new AppError('仅审核通过的报告可以分发', 400);
+    if (report.isLocked) {
+      throw new AppError('报告已被危急值锁定，需先确认危急值后才能分发', 400);
     }
 
-    if (report.isLocked) {
+    if (report.status === ReportStatus.LOCKED) {
       throw new AppError('报告处于锁定状态，无法分发', 400);
+    }
+
+    if (report.status !== ReportStatus.APPROVED) {
+      throw new AppError('仅审核通过的报告可以分发', 400);
     }
 
     return await prisma.$transaction(async (tx) => {

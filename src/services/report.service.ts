@@ -38,21 +38,73 @@ class ReportService {
     resultMap: Map<string, any>,
     contradictions: { test1: string; test2: string; type: string }[]
   ) {
-    const rules: { cond1: { code: string; pred: (v: any) => boolean }; cond2: { code: string; pred: (v: any) => boolean }; type: string }[] = [
+    const getNumeric = (r: any) => {
+      if (r?.numericValue !== undefined && r.numericValue !== null) {
+        return parseFloat(r.numericValue.toString());
+      }
+      return undefined;
+    };
+
+    const rules: {
+      cond1: { code: string; pred: (v: any) => boolean };
+      cond2: { code: string; pred: (v: any) => boolean };
+      type: string;
+    }[] = [
       {
-        cond1: { code: 'HBsAg', pred: (r) => r.isAbnormal === false },
-        cond2: { code: 'HBsAb', pred: (r) => r.isAbnormal === true },
-        type: '乙肝表面抗原阴性与表面抗体阳性同时存在（正常免疫后）',
+        cond1: {
+          code: 'HBsAg',
+          pred: (r) => r && !r.isAbnormal,
+        },
+        cond2: {
+          code: 'HBsAb',
+          pred: (r) => r && r.isAbnormal,
+        },
+        type: '乙肝表面抗原阴性与表面抗体阳性同时存在（免疫后常见正常现象，建议结合临床）',
       },
       {
-        cond1: { code: 'WBC', pred: (r) => r.numericValue && r.numericValue.toNumber() < 4 },
-        cond2: { code: 'NEUT_PCT', pred: (r) => r.numericValue && r.numericValue.toNumber() > 70 },
-        type: '白细胞减少与中性粒细胞百分比升高矛盾',
+        cond1: {
+          code: 'HBsAg',
+          pred: (r) => r && r.isAbnormal,
+        },
+        cond2: {
+          code: 'HBsAb',
+          pred: (r) => r && r.isAbnormal,
+        },
+        type: '乙肝表面抗原阳性（感染）与表面抗体阳性（免疫）同时存在，需复核',
       },
       {
-        cond1: { code: 'HGB', pred: (r) => r.numericValue && r.numericValue.toNumber() < 100 },
-        cond2: { code: 'MCV', pred: (r) => r.numericValue && r.numericValue.toNumber() > 100 },
-        type: '大细胞性贫血相关指标',
+        cond1: {
+          code: 'WBC',
+          pred: (r) => {
+            const v = getNumeric(r);
+            return v !== undefined && v < 4;
+          },
+        },
+        cond2: {
+          code: 'NEUT_PCT',
+          pred: (r) => {
+            const v = getNumeric(r);
+            return v !== undefined && v > 70;
+          },
+        },
+        type: '白细胞减少与中性粒细胞百分比升高存在矛盾，需复核',
+      },
+      {
+        cond1: {
+          code: 'HGB',
+          pred: (r) => {
+            const v = getNumeric(r);
+            return v !== undefined && v < 100;
+          },
+        },
+        cond2: {
+          code: 'MCV',
+          pred: (r) => {
+            const v = getNumeric(r);
+            return v !== undefined && v > 100;
+          },
+        },
+        type: '血红蛋白降低（贫血）伴红细胞体积升高，提示大细胞性贫血可能，建议结合临床',
       },
     ];
 
@@ -311,16 +363,20 @@ class ReportService {
       throw new NotFoundError('报告不存在');
     }
 
+    if (report.isLocked) {
+      throw new AppError('报告已被危急值锁定，需先确认危急值通知解锁后才能审核', 400);
+    }
+
+    if (report.status === ReportStatus.LOCKED) {
+      throw new AppError('报告处于锁定状态，需先确认危急值通知解锁后才能审核', 400);
+    }
+
     if (report.status === ReportStatus.DRAFT) {
       throw new AppError('草稿报告需先修正后才能审核', 400);
     }
 
-    if (report.status === ReportStatus.LOCKED) {
-      throw new AppError('危急值报告已锁定，需确认危急值后才能审核', 400);
-    }
-
     if (report.status !== ReportStatus.PENDING_REVIEW) {
-      throw new AppError('报告状态不允许审核', 400);
+      throw new AppError(`报告状态不允许审核（当前状态：${report.status}）`, 400);
     }
 
     const result = await prisma.$transaction(async (tx) => {
@@ -472,6 +528,12 @@ class ReportService {
     const report = await prisma.report.findUnique({ where: { id: reportId } });
     if (!report) {
       throw new NotFoundError('报告不存在');
+    }
+    if (report.isLocked) {
+      throw new AppError('报告已被危急值锁定，无法提交审核', 400);
+    }
+    if (report.status === ReportStatus.LOCKED) {
+      throw new AppError('报告处于锁定状态，无法提交审核', 400);
     }
     if (report.status !== ReportStatus.DRAFT) {
       throw new AppError('仅草稿报告可以提交审核', 400);

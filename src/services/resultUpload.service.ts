@@ -15,17 +15,41 @@ export interface UploadResultInput {
 }
 
 class ResultUploadService {
-  private parseReferenceRange(rangeStr?: string): { min?: number; max?: number; isQualitative: boolean; positives?: string[] } {
+  private parseReferenceRange(rangeStr?: string): {
+    isQualitative: boolean;
+    referenceIsNegative?: boolean;
+    referenceIsPositive?: boolean;
+    expectedPositiveValues?: string[];
+    min?: number;
+    max?: number;
+  } {
     if (!rangeStr) {
       return { isQualitative: false };
     }
 
-    const positiveMatch = rangeStr.match(/^阳性:\s*(.+)$/);
+    if (/^阴性$/i.test(rangeStr.trim()) || /^-$/.test(rangeStr.trim())) {
+      return { isQualitative: true, referenceIsNegative: true };
+    }
+
+    if (/^阳性$/i.test(rangeStr.trim()) || /^\+$/.test(rangeStr.trim())) {
+      return { isQualitative: true, referenceIsPositive: true };
+    }
+
+    const positiveMatch = rangeStr.match(/^阳性:\s*(.+)$/i);
     if (positiveMatch) {
       return {
         isQualitative: true,
-        positives: positiveMatch[1].split(/[,，、;；]/).map(s => s.trim()),
+        referenceIsPositive: true,
+        expectedPositiveValues: positiveMatch[1].split(/[,，、;；]/).map(s => s.trim()),
       };
+    }
+
+    if (rangeStr.includes('阴性') && !rangeStr.includes('阳性')) {
+      return { isQualitative: true, referenceIsNegative: true };
+    }
+
+    if (rangeStr.includes('阳性') && !rangeStr.includes('阴性')) {
+      return { isQualitative: true, referenceIsPositive: true };
     }
 
     const numericMatch = rangeStr.match(/([\d.]+)\s*[-~]\s*([\d.]+)/);
@@ -58,24 +82,36 @@ class ResultUploadService {
     const reference = this.parseReferenceRange(test.referenceRange);
 
     if (reference.isQualitative) {
-      const isPositive = reference.positives?.some(p =>
-        value.toLowerCase().includes(p.toLowerCase())
-      );
-      const isNegative = value.toLowerCase().includes('阴性') || value.toLowerCase() === '-';
-      const isReferenceNegative = !reference.positives || reference.positives.length === 0;
+      const isResultPositive =
+        /阳性|\+\+|\+|positive/i.test(value) ||
+        (reference.expectedPositiveValues?.some(p =>
+          value.toLowerCase().includes(p.toLowerCase())
+        ) ?? false);
 
-      if (isReferenceNegative) {
-        const abnormal = !isNegative;
+      const isResultNegative =
+        /阴性|-|negative/i.test(value);
+
+      if (reference.referenceIsNegative) {
+        const isAbnormal = !isResultNegative || isResultPositive;
         return {
-          flag: abnormal ? ResultFlag.ABNORMAL_HIGH : ResultFlag.NORMAL,
-          isAbnormal: abnormal,
+          flag: isAbnormal ? ResultFlag.ABNORMAL_HIGH : ResultFlag.NORMAL,
+          isAbnormal,
+          isCritical: false,
+        };
+      }
+
+      if (reference.referenceIsPositive) {
+        const isAbnormal = !isResultPositive;
+        return {
+          flag: isAbnormal ? ResultFlag.ABNORMAL_LOW : ResultFlag.NORMAL,
+          isAbnormal,
           isCritical: false,
         };
       }
 
       return {
-        flag: isPositive ? ResultFlag.NORMAL : ResultFlag.ABNORMAL_LOW,
-        isAbnormal: !isPositive,
+        flag: ResultFlag.NORMAL,
+        isAbnormal: false,
         isCritical: false,
       };
     }
@@ -187,10 +223,18 @@ class ResultUploadService {
       });
 
       if (input.taskId) {
-        await tx.testTask.update({
+        const task = await tx.testTask.update({
           where: { id: input.taskId },
           data: { status: 'COMPLETED', completedAt: new Date() },
+          select: { deviceId: true },
         });
+
+        if (task.deviceId) {
+          await tx.device.update({
+            where: { id: task.deviceId },
+            data: { currentLoad: { decrement: 1 } },
+          });
+        }
       }
 
       const remaining = await tx.testTask.count({

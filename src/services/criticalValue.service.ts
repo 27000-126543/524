@@ -203,12 +203,20 @@ class CriticalValueService {
         where: {
           reportId: notification.reportId,
           type: 'CRITICAL_VALUE',
-          status: { not: NotificationStatus.CONFIRMED },
-          level: NotificationLevel.LEVEL_1,
+          status: { notIn: [NotificationStatus.CONFIRMED, NotificationStatus.ESCALATED] },
         },
       });
 
-      if (pendingCount === 0) {
+      const allLevel1Confirmed = await prisma.notification.count({
+        where: {
+          reportId: notification.reportId,
+          type: 'CRITICAL_VALUE',
+          level: NotificationLevel.LEVEL_1,
+          status: { not: NotificationStatus.CONFIRMED },
+        },
+      });
+
+      if (pendingCount === 0 || allLevel1Confirmed === 0) {
         const report = await prisma.report.update({
           where: { id: notification.reportId },
           data: {
@@ -238,7 +246,7 @@ class CriticalValueService {
       where: {
         type: 'CRITICAL_VALUE',
         status: { in: [NotificationStatus.SENT, NotificationStatus.READ] },
-        level: NotificationLevel.LEVEL_1,
+        level: { in: [NotificationLevel.LEVEL_1, NotificationLevel.LEVEL_2] },
         sentAt: { lte: threshold },
         reportId: { not: null },
       },
@@ -258,13 +266,17 @@ class CriticalValueService {
 
     return {
       scanned: pendingNotifications.length,
-      escalated: results.length,
+      escalated: results.filter(r => r.status !== 'MAX_LEVEL_REACHED' && r.status !== 'ALREADY_ESCALATED').length,
       details: results,
     };
   }
 
   private async escalateNotification(notification: any): Promise<any> {
     const now = new Date();
+
+    if (notification.level === NotificationLevel.LEVEL_3) {
+      return { id: notification.id, status: 'MAX_LEVEL_REACHED' };
+    }
 
     await prisma.notification.update({
       where: { id: notification.id },
@@ -289,6 +301,18 @@ class CriticalValueService {
         select: { id: true },
       });
       nextRecipients = deptHeads.map(u => u.id);
+
+      if (nextRecipients.length === 0) {
+        const labDirs = await prisma.user.findMany({
+          where: {
+            departmentId: report.departmentId,
+            role: UserRole.LAB_DIRECTOR,
+            isActive: true,
+          },
+          select: { id: true },
+        });
+        nextRecipients = labDirs.map(u => u.id);
+      }
     } else if (notification.level === NotificationLevel.LEVEL_2) {
       nextLevel = NotificationLevel.LEVEL_3;
       const medAffairs = await prisma.user.findMany({
@@ -296,6 +320,14 @@ class CriticalValueService {
         select: { id: true },
       });
       nextRecipients = medAffairs.map(u => u.id);
+
+      if (nextRecipients.length === 0) {
+        const admins = await prisma.user.findMany({
+          where: { role: UserRole.ADMIN, isActive: true },
+          select: { id: true },
+        });
+        nextRecipients = admins.map(u => u.id);
+      }
     } else {
       return { id: notification.id, status: 'MAX_LEVEL_REACHED' };
     }
