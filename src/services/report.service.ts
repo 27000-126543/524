@@ -500,7 +500,70 @@ class ReportService {
       throw new NotFoundError('报告不存在');
     }
 
-    return report;
+    let criticalLockInfo: any = null;
+    if (report.hasCritical) {
+      const notifications = await prisma.notification.findMany({
+        where: { reportId, type: 'CRITICAL_VALUE' },
+        orderBy: { sentAt: 'asc' },
+        include: {
+          recipient: { select: { id: true, name: true, role: true } },
+          confirmedBy: { select: { id: true, name: true, role: true } },
+          escalatedTo: {
+            include: {
+              recipient: { select: { name: true, role: true } },
+              confirmedBy: { select: { name: true, role: true } },
+            },
+          },
+          escalatedFrom: {
+            include: { recipient: { select: { name: true } } },
+          },
+        },
+      });
+
+      const level1 = notifications.filter(n => n.level === NotificationLevel.LEVEL_1);
+      const level2 = notifications.filter(n => n.level === NotificationLevel.LEVEL_2);
+      const level3 = notifications.filter(n => n.level === NotificationLevel.LEVEL_3);
+      const level1NotConfirmed = level1.filter(n => !n.confirmedAt);
+      const level1Confirmed = level1.filter(n => n.confirmedAt);
+      const level1Escalated = level1.filter(n => n.status === NotificationStatus.ESCALATED);
+
+      criticalLockInfo = {
+        summary: {
+          totalLevel1: level1.length,
+          level1NotConfirmed: level1NotConfirmed.length,
+          level1Confirmed: level1Confirmed.length,
+          level1Escalated: level1Escalated.length,
+          level2Count: level2.length,
+          level3Count: level3.length,
+          allLevel1Confirmed: level1.length > 0 && level1NotConfirmed.length === 0,
+        },
+        level1NotConfirmed: level1NotConfirmed.map(n => ({
+          id: n.id, recipient: n.recipient, sentAt: n.sentAt, status: n.status,
+          isEscalated: n.status === NotificationStatus.ESCALATED,
+          escalatedAt: (n as any).escalatedAt,
+        })),
+        level1Confirmed: level1Confirmed.map(n => ({
+          id: n.id, recipient: n.recipient, sentAt: n.sentAt,
+          confirmedAt: n.confirmedAt, confirmedBy: n.confirmedBy,
+          isLate: n.status === NotificationStatus.ESCALATED,
+          escalatedAt: (n as any).escalatedAt,
+        })),
+        escalationProcessed: [...level2, ...level3].map(n => ({
+          id: n.id,
+          level: n.level,
+          recipient: n.recipient,
+          sentAt: n.sentAt,
+          status: n.status,
+          confirmedAt: n.confirmedAt,
+          confirmedBy: n.confirmedBy,
+          escalatedFrom: (n as any).escalatedFrom
+            ? { recipient: (n as any).escalatedFrom.recipient, notificationId: (n as any).escalatedFromId }
+            : null,
+        })),
+      };
+    }
+
+    return { ...report as any, criticalLockInfo };
   }
 
   async getReports(params: {

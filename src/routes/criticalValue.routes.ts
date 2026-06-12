@@ -1,6 +1,10 @@
 import { Router } from 'express';
 import { param, query } from 'express-validator';
-import { triggerCriticalAlert, confirmCriticalNotification, runEscalationCheck, getCriticalNotifications } from '../controllers/criticalValue.controller';
+import {
+  triggerCriticalAlert, confirmCriticalNotification, runEscalationCheck,
+  getCriticalNotifications, markNotificationRead, getCriticalTimeline,
+  getReportCriticalLockInfo,
+} from '../controllers/criticalValue.controller';
 import { authenticate, requireRoles } from '../middleware/auth';
 import { UserRole } from '@prisma/client';
 
@@ -23,6 +27,13 @@ router.post(
 );
 
 router.post(
+  '/notification/:notificationId/read',
+  authenticate,
+  [param('notificationId').isUUID()],
+  markNotificationRead
+);
+
+router.post(
   '/escalation-check',
   authenticate,
   requireRoles(UserRole.ADMIN, UserRole.LAB_DIRECTOR),
@@ -39,8 +50,26 @@ router.get(
     query('endDate').optional().isISO8601(),
     query('page').optional().isInt({ min: 1 }),
     query('pageSize').optional().isInt({ min: 1, max: 100 }),
+    query('reportNo').optional().isString(),
+    query('patientName').optional().isString(),
+    query('confirmed').optional().isIn(['true', 'false', 'all']),
+    query('escalated').optional().isIn(['true', 'false', 'all']),
   ],
   getCriticalNotifications
+);
+
+router.get(
+  '/:reportId/timeline',
+  authenticate,
+  [param('reportId').isUUID()],
+  getCriticalTimeline
+);
+
+router.get(
+  '/:reportId/lock-info',
+  authenticate,
+  [param('reportId').isUUID()],
+  getReportCriticalLockInfo
 );
 
 export default router;
