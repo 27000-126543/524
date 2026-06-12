@@ -203,22 +203,25 @@ class CriticalValueService {
       throw new AppError(`仅通知接收人（${notification.recipient?.name || notification.recipientId}）可确认此危急值通知`, 403);
     }
 
-    if (notification.status === NotificationStatus.CONFIRMED) {
+    if (notification.confirmedAt) {
       return notification;
     }
 
-    if (notification.status === NotificationStatus.ESCALATED) {
-      throw new AppError('此通知已升级，无法确认。请确认升级后的新通知', 400);
+    const now = new Date();
+    const wasEscalated = notification.status === NotificationStatus.ESCALATED;
+
+    let updateData: any = {
+      confirmedAt: now,
+      confirmedById: confirmerId,
+    };
+
+    if (!wasEscalated) {
+      updateData.status = NotificationStatus.CONFIRMED;
     }
 
-    const now = new Date();
     const confirmed = await prisma.notification.update({
       where: { id: notificationId },
-      data: {
-        status: NotificationStatus.CONFIRMED,
-        confirmedAt: now,
-        confirmedById: confirmerId,
-      },
+      data: updateData,
     });
 
     if (notification.reportId && notification.level === NotificationLevel.LEVEL_1) {
@@ -227,7 +230,7 @@ class CriticalValueService {
           reportId: notification.reportId,
           type: 'CRITICAL_VALUE',
           level: NotificationLevel.LEVEL_1,
-          status: { not: NotificationStatus.CONFIRMED },
+          confirmedAt: null,
         },
       });
 
@@ -240,20 +243,24 @@ class CriticalValueService {
           },
         });
 
-        logger.info(`报告 ${report.reportNo} 危急值已全部确认，解锁并进入待审核`);
+        logger.info(`报告 ${report.reportNo} 一级危急值通知已全部确认，解锁并进入待审核`);
 
         wsManager.broadcast('report:unlocked', {
           type: 'REPORT_UNLOCKED',
           reportId: report.id,
           reportNo: report.reportNo,
           unlockedBy: confirmerId,
+          notificationId,
+          isLateConfirmation: wasEscalated,
           timestamp: now.toISOString(),
         });
+      } else {
+        logger.info(`一级危急值通知 ${notificationId} 已确认，但仍有${unconfirmedLevel1Count}个一级通知未确认，报告保持锁定`);
       }
     }
 
-    if (notification.reportId && notification.level !== NotificationLevel.LEVEL_1) {
-      logger.info(`危急值${notification.level === NotificationLevel.LEVEL_2 ? '二级' : '三级'}通知已确认（报告${notification.report?.reportNo || notification.reportId}），记录处理动作`);
+    if (notification.level !== NotificationLevel.LEVEL_1) {
+      logger.info(`危急值${notification.level === NotificationLevel.LEVEL_2 ? '二级' : '三级'}通知已确认（报告${notification.report?.reportNo || notification.reportId}），仅记录处理动作`);
     }
 
     return confirmed;
@@ -270,6 +277,7 @@ class CriticalValueService {
         level: { in: [NotificationLevel.LEVEL_1, NotificationLevel.LEVEL_2] },
         sentAt: { lte: threshold },
         reportId: { not: null },
+        confirmedAt: null,
       },
       include: { report: true },
     });
@@ -424,6 +432,8 @@ class CriticalValueService {
               level: true,
               status: true,
               escalatedAt: true,
+              confirmedAt: true,
+              confirmedBy: { select: { name: true, role: true } },
               recipient: { select: { name: true, role: true } },
             },
           },
