@@ -1,0 +1,405 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  LAB_TECHNICIAN
+  LAB_DIRECTOR
+  CLINICIAN
+  DEPARTMENT_HEAD
+  MEDICAL_AFFAIRS
+  PATIENT
+}
+
+enum SampleStatus {
+  RECEIVED
+  REJECTED
+  ASSIGNED
+  ANALYZING
+  ANALYZED
+  RECHECKING
+  REPORTING
+  REPORTED
+  ARCHIVED
+}
+
+enum SampleType {
+  BLOOD
+  URINE
+  STOOL
+  SPUTUM
+  CEREBROSPINAL
+  PLEURAL
+  ASCITIC
+  OTHER
+}
+
+enum UrgencyLevel {
+  ROUTINE
+  URGENT
+  EMERGENCY
+  CRITICAL
+}
+
+enum ReportStatus {
+  DRAFT
+  PENDING_REVIEW
+  LOCKED
+  APPROVED
+  DISTRIBUTED
+  ARCHIVED
+}
+
+enum WorkOrderType {
+  RECHECK
+  QC
+}
+
+enum WorkOrderStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum NotificationLevel {
+  LEVEL_1
+  LEVEL_2
+  LEVEL_3
+}
+
+enum NotificationStatus {
+  SENT
+  READ
+  CONFIRMED
+  ESCALATED
+}
+
+enum ResultFlag {
+  NORMAL
+  ABNORMAL_LOW
+  ABNORMAL_HIGH
+  CRITICAL_LOW
+  CRITICAL_HIGH
+  INCONCLUSIVE
+}
+
+enum DeviceStatus {
+  ONLINE
+  OFFLINE
+  MAINTENANCE
+  ERROR
+}
+
+model User {
+  id              String    @id @default(uuid())
+  username        String    @unique
+  password        String
+  name            String
+  email           String?   @unique
+  phone           String?
+  role            UserRole
+  departmentId    String?
+  department      Department? @relation(fields: [departmentId], references: [id])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  isActive        Boolean  @default(true)
+
+  notifications   Notification[]
+  createdOrders   RequisitionOrder[]
+  approvedReports   Report[]        @relation("ApprovedReports")
+  assignedWorkOrders WorkOrder[]    @relation("AssignedWorkOrders")
+  createdWorkOrders WorkOrder[] @relation("CreatedWorkOrders")
+}
+
+model Department {
+  id           String   @id @default(uuid())
+  name         String   @unique
+  code         String   @unique
+  description  String?
+  type         String
+  isLab        Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  users        User[]
+  labTests     LabTest[]
+  devices      Device[]
+  samples      Sample[]     @relation("SampleDepartment")
+  reports      Report[]
+  workOrders   WorkOrder[]
+}
+
+model LabTest {
+  id              String   @id @default(uuid())
+  code            String   @unique
+  name            String
+  departmentId    String
+  department      Department @relation(fields: [departmentId], references: [id])
+  sampleType      SampleType
+  turnaroundTime  Int      @default(60)
+  price           Decimal  @db.Decimal(10, 2)
+  unit            String?
+  referenceRange  String?
+  criticalLow    String?
+  criticalHigh   String?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  requisitionItems RequisitionItem[]
+  testResults     TestResult[]
+  deviceTests     DeviceTest[]
+}
+
+model Device {
+  id            String       @id @default(uuid())
+  code          String       @unique
+  name          String
+  model         String?
+  departmentId  String
+  department    Department   @relation(fields: [departmentId], references: [id])
+  status        DeviceStatus @default(ONLINE)
+  maxLoad       Int        @default(100)
+  currentLoad   Int        @default(0)
+  failureRate   Decimal    @db.Decimal(5, 4) @default(0)
+  lastMaintenance DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  testTasks     TestTask[]
+  deviceTests   DeviceTest[]
+}
+
+model DeviceTest {
+  id        String  @id @default(uuid())
+  deviceId  String
+  device    Device  @relation(fields: [deviceId], references: [id])
+  testId    String
+  labTest   LabTest @relation(fields: [testId], references: [id])
+  isActive  Boolean @default(true)
+  createdAt DateTime @default(now())
+
+  @@unique([deviceId, testId])
+}
+
+model Patient {
+  id            String   @id @default(uuid())
+  mrn           String   @unique
+  name          String
+  gender        String
+  birthDate     DateTime
+  idCard        String?  @unique
+  phone         String?
+  address       String?
+  bloodType     String?
+  allergies     String?
+  chronicDiseases String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  samples       Sample[]
+  requisitions  RequisitionOrder[]
+  reports       Report[]
+}
+
+model RequisitionOrder {
+  id             String        @id @default(uuid())
+  orderNo        String      @unique
+  patientId      String
+  patient        Patient     @relation(fields: [patientId], references: [id])
+  orderedById    String
+  orderedBy      User        @relation(fields: [orderedById], references: [id])
+  urgency        UrgencyLevel @default(ROUTINE)
+  clinicalDiagnosis String?
+  orderTime      DateTime    @default(now())
+  createdAt      DateTime    @default(now())
+  status         String      @default("PENDING")
+
+  items          RequisitionItem[]
+  samples        Sample[]
+}
+
+model RequisitionItem {
+  id             String            @id @default(uuid())
+  requisitionId  String
+  requisition    RequisitionOrder  @relation(fields: [requisitionId], references: [id])
+  testId         String
+  labTest        LabTest         @relation(fields: [testId], references: [id])
+  quantity       Int             @default(1)
+  createdAt      DateTime        @default(now())
+}
+
+model Sample {
+  id                String        @id @default(uuid())
+  sampleNo         String        @unique
+  patientId         String
+  patient           Patient       @relation(fields: [patientId], references: [id])
+  requisitionId     String?
+  requisition       RequisitionOrder? @relation(fields: [requisitionId], references: [id])
+  sampleType        SampleType
+  urgency           UrgencyLevel  @default(ROUTINE)
+  status            SampleStatus  @default(RECEIVED)
+  receivedAt        DateTime    @default(now())
+  receivedById      String?
+  departmentId      String?
+  department        Department? @relation("SampleDepartment", fields: [departmentId], references: [id])
+  volume            String?
+  collectionTime      DateTime?
+  collectionSite    String?
+  collector         String?
+  rejectionReason   String?
+  missingItems      Json?
+  assignedAt          DateTime?
+  analysisStartTime DateTime?
+  analysisEndTime  DateTime?
+  completedAt     DateTime?
+  archivedAt      DateTime?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  testTasks         TestTask[]
+  testResults       TestResult[]
+  report            Report?
+}
+
+model TestTask {
+  id            String   @id @default(uuid())
+  sampleId      String
+  sample        Sample   @relation(fields: [sampleId], references: [id])
+  testId        String
+  labTest       LabTest? @relation(fields: [testId], references: [id])
+  deviceId      String?
+  device        Device?  @relation(fields: [deviceId], references: [id])
+  priority      Int      @default(0)
+  status        String   @default("PENDING")
+  assignedAt    DateTime?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  testResults   TestResult[]
+}
+
+model TestResult {
+  id            String     @id @default(uuid())
+  sampleId      String
+  sample        Sample     @relation(fields: [sampleId], references: [id])
+  taskId        String?
+  testTask      TestTask?  @relation(fields: [taskId], references: [id])
+  testId        String
+  labTest       LabTest    @relation(fields: [testId], references: [id])
+  resultValue  String
+  numericValue Decimal?   @db.Decimal(12, 4)
+  unit          String?
+  flag          ResultFlag @default(NORMAL)
+  isAbnormal    Boolean  @default(false)
+  isCritical    Boolean  @default(false)
+  referenceRange String?
+  testedBy        String?
+  testedAt      DateTime?
+  reviewedBy    String?
+  reviewedAt    DateTime?
+  isRecheck     Boolean  @default(false)
+  recheckReason String?
+  historicalDiff  String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Report {
+  id               String         @id @default(uuid())
+  reportNo        String       @unique
+  sampleId         String
+  sample           Sample       @relation(fields: [sampleId], references: [id])
+  patientId        String
+  patient          Patient      @relation(fields: [patientId], references: [id])
+  departmentId     String
+  department       Department   @relation(fields: [departmentId], references: [id])
+  status           ReportStatus @default(DRAFT)
+  isLocked         Boolean      @default(false)
+  hasCritical      Boolean      @default(false)
+  validationErrors Json?
+  reviewedById     String?
+  reviewedBy       User?        @relation("ApprovedReports", fields: [reviewedById], references: [id])
+  reviewedAt       DateTime?
+  generatedAt      DateTime?
+  approvedAt       DateTime?
+  distributedAt  DateTime?
+  archivedAt       DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  notifications    Notification[]
+  workOrders       WorkOrder[]
+}
+
+model WorkOrder {
+  id             String          @id @default(uuid())
+  type           WorkOrderType
+  title          String
+  description    String?
+  reportId       String?
+  report         Report?         @relation(fields: [reportId], references: [id])
+  assignedToId   String?
+  assignedTo     User?           @relation("AssignedWorkOrders", fields: [assignedToId], references: [id])
+  createdById    String
+  createdBy      User            @relation("CreatedWorkOrders", fields: [createdById], references: [id])
+  departmentId   String?
+  department     Department?     @relation(fields: [departmentId], references: [id])
+  status         WorkOrderStatus @default(PENDING)
+  priority       Int           @default(0)
+  dueDate        DateTime?
+  completedAt    DateTime?
+  completedNote    String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+model Notification {
+  id              String             @id @default(uuid())
+  type            String
+  title           String
+  content         String
+  level           NotificationLevel @default(LEVEL_1)
+  status          NotificationStatus @default(SENT)
+  reportId        String?
+  report          Report?          @relation(fields: [reportId], references: [id])
+  recipientId    String
+  recipient       User             @relation(fields: [recipientId], references: [id])
+  sentAt          DateTime         @default(now())
+  readAt          DateTime?
+  confirmedAt     DateTime?
+  escalatedAt  DateTime?
+  createdAt       DateTime         @default(now())
+}
+
+model DailyReport {
+  id              String   @id @default(uuid())
+  reportDate      DateTime @unique
+  generatedAt   DateTime @default(now())
+  departmentStats Json
+  overallStats    Json
+  tatStats        Json
+  deviceStats     Json
+  createdAt       DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String
+  entityType String
+  entityId  String?
+  oldValue  Json?
+  newValue  Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+}
