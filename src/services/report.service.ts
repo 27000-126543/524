@@ -15,28 +15,32 @@ class ReportService {
   private validateLogic(testResults: any[]): {
     passed: boolean;
     errors: string[];
-    contradictions: { test1: string; test2: string; type: string }[];
+    contradictions: { test1: string; test2: string; type: string; blocking: boolean }[];
+    warnings: string[];
   } {
     const errors: string[] = [];
-    const contradictions: { test1: string; test2: string; type: string }[] = [];
+    const contradictions: { test1: string; test2: string; type: string; blocking: boolean }[] = [];
+    const warnings: string[] = [];
 
     const resultMap = new Map<string, any>();
     for (const r of testResults) {
       resultMap.set(r.labTest.code, r);
     }
 
-    this.checkContradictions(resultMap, contradictions);
+    this.checkContradictions(resultMap, contradictions, warnings);
     this.checkReferenceRange(testResults, errors);
     this.checkDeltaCheck(testResults, errors);
 
-    const passed = errors.length === 0 && contradictions.length === 0;
+    const blockingContradictions = contradictions.filter(c => c.blocking);
+    const passed = errors.length === 0 && blockingContradictions.length === 0;
 
-    return { passed, errors, contradictions };
+    return { passed, errors, contradictions, warnings };
   }
 
   private checkContradictions(
     resultMap: Map<string, any>,
-    contradictions: { test1: string; test2: string; type: string }[]
+    contradictions: { test1: string; test2: string; type: string; blocking: boolean }[],
+    warnings: string[]
   ) {
     const getNumeric = (r: any) => {
       if (r?.numericValue !== undefined && r.numericValue !== null) {
@@ -49,6 +53,7 @@ class ReportService {
       cond1: { code: string; pred: (v: any) => boolean };
       cond2: { code: string; pred: (v: any) => boolean };
       type: string;
+      blocking: boolean;
     }[] = [
       {
         cond1: {
@@ -60,6 +65,7 @@ class ReportService {
           pred: (r) => r && r.isAbnormal,
         },
         type: '乙肝表面抗原阴性与表面抗体阳性同时存在（免疫后常见正常现象，建议结合临床）',
+        blocking: false,
       },
       {
         cond1: {
@@ -71,6 +77,7 @@ class ReportService {
           pred: (r) => r && r.isAbnormal,
         },
         type: '乙肝表面抗原阳性（感染）与表面抗体阳性（免疫）同时存在，需复核',
+        blocking: true,
       },
       {
         cond1: {
@@ -88,6 +95,7 @@ class ReportService {
           },
         },
         type: '白细胞减少与中性粒细胞百分比升高存在矛盾，需复核',
+        blocking: true,
       },
       {
         cond1: {
@@ -105,6 +113,7 @@ class ReportService {
           },
         },
         type: '血红蛋白降低（贫血）伴红细胞体积升高，提示大细胞性贫血可能，建议结合临床',
+        blocking: false,
       },
     ];
 
@@ -116,7 +125,11 @@ class ReportService {
           test1: rule.cond1.code,
           test2: rule.cond2.code,
           type: rule.type,
+          blocking: rule.blocking,
         });
+        if (!rule.blocking) {
+          warnings.push(rule.type);
+        }
       }
     }
   }
@@ -184,6 +197,7 @@ class ReportService {
             passed: validation.passed,
             errors: validation.errors,
             contradictions: validation.contradictions,
+            warnings: validation.warnings,
           },
           generatedAt: now,
         },
@@ -231,11 +245,25 @@ class ReportService {
       },
     });
 
+    const blockingContradictions = validation.contradictions.filter((c: any) => c.blocking);
+    const nonBlockingContradictions = validation.contradictions.filter((c: any) => !c.blocking);
+
+    let description = '报告逻辑校验未通过：\n';
+    if (validation.errors.length > 0) {
+      description += `错误：${validation.errors.join('\n')}\n`;
+    }
+    if (blockingContradictions.length > 0) {
+      description += `阻断性矛盾：${blockingContradictions.map((c: any) => c.type).join('\n')}\n`;
+    }
+    if (nonBlockingContradictions.length > 0) {
+      description += `提示性矛盾（不阻断审核）：${nonBlockingContradictions.map((c: any) => c.type).join('\n')}\n`;
+    }
+
     const order = await tx.workOrder.create({
       data: {
         type: WorkOrderType.QC,
         title: `质控工单 - ${report.reportNo}`,
-        description: `报告逻辑校验未通过：\n错误：${validation.errors.join('\n')}\n矛盾：${validation.contradictions.map((c: any) => c.type).join('\n')}`,
+        description,
         reportId: report.id,
         assignedToId: director?.id,
         createdById: 'system',

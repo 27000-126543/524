@@ -108,7 +108,7 @@ class SampleReceptionService {
         collectionSite: input.collectionSite,
         collector: input.collector,
         rejectionReason: isIncomplete ? '样本信息不完整' : null,
-        missingItems: isIncomplete ? missingItems : null,
+        missingItems: isIncomplete ? missingItems as any : undefined,
         assignedAt: isIncomplete ? null : new Date(),
       },
       include: {
@@ -139,7 +139,7 @@ class SampleReceptionService {
       sample,
       isIncomplete,
       missingItems,
-      assignedDepartment: sample.department?.name,
+      assignedDepartment: (sample as any).department?.name,
       tests: tests.map(t => ({ code: t.code, name: t.name })),
     };
   }

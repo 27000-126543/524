@@ -81,7 +81,7 @@ class ReportDistributionService {
       },
       select: { id: true },
     });
-    patientDeptUsers.forEach(u => recipients.push(u.id));
+    (patientDeptUsers as any[]).forEach((u: any) => recipients.push(u.id));
 
     const uniqueRecipients = [...new Set(recipients)];
 

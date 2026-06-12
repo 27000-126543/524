@@ -120,7 +120,7 @@ class ResultUploadService {
       return { flag: ResultFlag.INCONCLUSIVE, isAbnormal: false, isCritical: false };
     }
 
-    let flag = ResultFlag.NORMAL;
+    let flag: ResultFlag = ResultFlag.NORMAL;
     let isAbnormal = false;
     let isCritical = false;
 
@@ -198,6 +198,28 @@ class ResultUploadService {
 
     const evaluation = this.evaluateResultFlag(input.resultValue, input.numericValue, test);
     const historicalDiff = await this.compareWithHistory(sample.patientId, input.testId, input.numericValue);
+
+    if (input.taskId) {
+      const task = await prisma.testTask.findUnique({
+        where: { id: input.taskId },
+      });
+
+      if (!task) {
+        throw new NotFoundError('检测任务不存在');
+      }
+
+      if (task.sampleId !== input.sampleId) {
+        throw new AppError(`任务 ${input.taskId} 不属于当前样本（任务样本: ${task.sampleId}，传入样本: ${input.sampleId}）`, 400);
+      }
+
+      if (task.testId !== input.testId) {
+        throw new AppError(`任务 ${input.taskId} 不属于当前检测项目（任务项目: ${task.testId}，传入项目: ${input.testId}）`, 400);
+      }
+
+      if (task.status !== 'ASSIGNED' && task.status !== 'IN_PROGRESS') {
+        throw new AppError(`任务 ${input.taskId} 当前状态为 ${task.status}，仅已分配(ASSIGNED)或进行中(IN_PROGRESS)的任务可上传结果`, 400);
+      }
+    }
 
     const result = await prisma.$transaction(async (tx) => {
       const testResult = await tx.testResult.create({

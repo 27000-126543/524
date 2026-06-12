@@ -66,16 +66,16 @@ class DailyReportService {
       where: { reportDate },
       create: {
         reportDate,
-        departmentStats,
-        overallStats,
-        tatStats,
-        deviceStats,
+        departmentStats: departmentStats as any,
+        overallStats: overallStats as any,
+        tatStats: tatStats as any,
+        deviceStats: deviceStats as any,
       },
       update: {
-        departmentStats,
-        overallStats,
-        tatStats,
-        deviceStats,
+        departmentStats: departmentStats as any,
+        overallStats: overallStats as any,
+        tatStats: tatStats as any,
+        deviceStats: deviceStats as any,
       },
     });
 
@@ -304,8 +304,8 @@ class DailyReportService {
       审核通过报告数: d.approvedReports,
       复检率: `${d.recheckRate.toFixed(2)}%`,
       危急值数: d.criticalCount,
-      平均TAT(分钟): d.tatAverageMinutes,
-      TAT目标(分钟): d.tatTargetMinutes,
+      '平均TAT(分钟)': d.tatAverageMinutes,
+      'TAT目标(分钟)': d.tatTargetMinutes,
       TAT达标率: `${d.tatComplianceRate.toFixed(2)}%`,
     }));
     const deptSheet = XLSX.utils.json_to_sheet(deptSheetData);

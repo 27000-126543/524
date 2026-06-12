@@ -129,6 +129,20 @@ class CriticalValueService {
     };
   }
 
+  private async createNotificationWithEscalation(
+    recipientId: string,
+    level: NotificationLevel,
+    data: any,
+    escalatedFromId: string
+  ) {
+    const notification = await this.createNotification(recipientId, level, data);
+    await prisma.notification.update({
+      where: { id: notification.id },
+      data: { escalatedFromId },
+    });
+    return notification;
+  }
+
   private async createNotification(
     recipientId: string,
     level: NotificationLevel,
@@ -178,15 +192,23 @@ class CriticalValueService {
   async confirmCriticalNotification(notificationId: string, confirmerId: string) {
     const notification = await prisma.notification.findUnique({
       where: { id: notificationId },
-      include: { report: true },
+      include: { report: true, recipient: { select: { name: true, role: true } } },
     });
 
     if (!notification) {
       throw new NotFoundError('通知不存在');
     }
 
+    if (notification.recipientId !== confirmerId) {
+      throw new AppError(`仅通知接收人（${notification.recipient?.name || notification.recipientId}）可确认此危急值通知`, 403);
+    }
+
     if (notification.status === NotificationStatus.CONFIRMED) {
       return notification;
+    }
+
+    if (notification.status === NotificationStatus.ESCALATED) {
+      throw new AppError('此通知已升级，无法确认。请确认升级后的新通知', 400);
     }
 
     const now = new Date();
@@ -195,19 +217,12 @@ class CriticalValueService {
       data: {
         status: NotificationStatus.CONFIRMED,
         confirmedAt: now,
+        confirmedById: confirmerId,
       },
     });
 
-    if (notification.reportId) {
-      const pendingCount = await prisma.notification.count({
-        where: {
-          reportId: notification.reportId,
-          type: 'CRITICAL_VALUE',
-          status: { notIn: [NotificationStatus.CONFIRMED, NotificationStatus.ESCALATED] },
-        },
-      });
-
-      const allLevel1Confirmed = await prisma.notification.count({
+    if (notification.reportId && notification.level === NotificationLevel.LEVEL_1) {
+      const unconfirmedLevel1Count = await prisma.notification.count({
         where: {
           reportId: notification.reportId,
           type: 'CRITICAL_VALUE',
@@ -216,7 +231,7 @@ class CriticalValueService {
         },
       });
 
-      if (pendingCount === 0 || allLevel1Confirmed === 0) {
+      if (unconfirmedLevel1Count === 0) {
         const report = await prisma.report.update({
           where: { id: notification.reportId },
           data: {
@@ -224,6 +239,8 @@ class CriticalValueService {
             status: ReportStatus.PENDING_REVIEW,
           },
         });
+
+        logger.info(`报告 ${report.reportNo} 危急值已全部确认，解锁并进入待审核`);
 
         wsManager.broadcast('report:unlocked', {
           type: 'REPORT_UNLOCKED',
@@ -233,6 +250,10 @@ class CriticalValueService {
           timestamp: now.toISOString(),
         });
       }
+    }
+
+    if (notification.reportId && notification.level !== NotificationLevel.LEVEL_1) {
+      logger.info(`危急值${notification.level === NotificationLevel.LEVEL_2 ? '二级' : '三级'}通知已确认（报告${notification.report?.reportNo || notification.reportId}），记录处理动作`);
     }
 
     return confirmed;
@@ -346,7 +367,7 @@ class CriticalValueService {
     });
 
     for (const recipientId of nextRecipients) {
-      await this.createNotification(recipientId, nextLevel, {
+      await this.createNotificationWithEscalation(recipientId, nextLevel, {
         reportId: report.id,
         reportNo: report.reportNo,
         patientName: patient?.name,
@@ -356,7 +377,7 @@ class CriticalValueService {
           value: r.resultValue,
           unit: r.unit,
         })),
-      });
+      }, notification.id);
     }
 
     return {
@@ -394,8 +415,28 @@ class CriticalValueService {
         take: pageSize,
         orderBy: { sentAt: 'desc' },
         include: {
-          recipient: { select: { name: true, role: true } },
-          report: { select: { reportNo: true } },
+          recipient: { select: { id: true, name: true, role: true } },
+          confirmedBy: { select: { id: true, name: true, role: true } },
+          report: { select: { reportNo: true, isLocked: true, status: true } },
+          escalatedFrom: {
+            select: {
+              id: true,
+              level: true,
+              status: true,
+              escalatedAt: true,
+              recipient: { select: { name: true, role: true } },
+            },
+          },
+          escalatedTo: {
+            select: {
+              id: true,
+              level: true,
+              status: true,
+              recipient: { select: { name: true, role: true } },
+              confirmedAt: true,
+              confirmedBy: { select: { name: true } },
+            },
+          },
         },
       }),
     ]);

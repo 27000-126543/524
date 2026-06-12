@@ -6,7 +6,7 @@ export const generateReport = async (req: any, res: Response, next: NextFunction
     const result = await reportService.generateReport(req.params.sampleId, req.user.id);
     res.status(201).json({
       success: true,
-      message: result.validation.passed
+      message: (result as any).validation?.passed
         ? '报告生成成功，待审核'
         : '报告生成成功，但逻辑校验未通过，已标记草稿',
       data: result,

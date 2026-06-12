@@ -112,6 +112,7 @@ model User {
   isActive        Boolean  @default(true)
 
   notifications   Notification[]
+  confirmedNotifications Notification[] @relation("ConfirmedBy")
   createdOrders   RequisitionOrder[]
   approvedReports   Report[]        @relation("ApprovedReports")
   assignedWorkOrders WorkOrder[]    @relation("AssignedWorkOrders")
@@ -156,6 +157,7 @@ model LabTest {
   requisitionItems RequisitionItem[]
   testResults     TestResult[]
   deviceTests     DeviceTest[]
+  testTasks       TestTask[]
 }
 
 model Device {
@@ -317,7 +319,7 @@ model TestResult {
 model Report {
   id               String         @id @default(uuid())
   reportNo        String       @unique
-  sampleId         String
+  sampleId         String       @unique
   sample           Sample       @relation(fields: [sampleId], references: [id])
   patientId        String
   patient          Patient      @relation(fields: [patientId], references: [id])
@@ -374,6 +376,11 @@ model Notification {
   report          Report?          @relation(fields: [reportId], references: [id])
   recipientId    String
   recipient       User             @relation(fields: [recipientId], references: [id])
+  confirmedById  String?
+  confirmedBy    User?            @relation("ConfirmedBy", fields: [confirmedById], references: [id])
+  escalatedFromId String?
+  escalatedFrom   Notification?    @relation("EscalationChain", fields: [escalatedFromId], references: [id])
+  escalatedTo     Notification[]   @relation("EscalationChain")
   sentAt          DateTime         @default(now())
   readAt          DateTime?
   confirmedAt     DateTime?
